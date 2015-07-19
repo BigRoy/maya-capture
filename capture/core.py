@@ -1,14 +1,9 @@
-"""Playblasting with independent viewport, camera and display options"""
-
-version_info = (0, 1, 0)
-
-__version__ = "%s.%s.%s" % version_info
-__license__ = "MIT"
-
 
 import sys
 import contextlib
 import re
+
+from .options import ViewportOptions, DisplayOptions, CameraOptions
 
 
 def capture(camera=None,
@@ -26,9 +21,10 @@ def capture(camera=None,
             maintain_aspect_ratio=True,
             overwrite=False,
             raw_frame_numbers=False,
-            camera_options=None,
-            viewport_options=None,
-            display_options=None,
+            default_options=(ViewportOptions(),
+                             DisplayOptions(),
+                             CameraOptions()),
+            options=None,
             complete_filename=None):
     """Playblast in an independent panel
 
@@ -96,9 +92,22 @@ def capture(camera=None,
         ratio = cmds.getAttr("defaultResolution.deviceAspectRatio")
         height = width / ratio
 
-
     start_frame = start_frame or cmds.playbackOptions(minTime=True, query=True)
     end_frame = end_frame or cmds.playbackOptions(maxTime=True, query=True)
+
+    context_options = []
+
+    # Apply defaults if not similar class type in `options`
+    for opt in default_options:
+        if options and type(opt) in options:
+            continue
+
+        context_options.append(opt)
+
+    # Apply user-options
+    if options:
+        for opt in options:
+            context_options.append(opt)
 
     # We need to wrap `completeFilename`, otherwise even when None is provided
     # it will use filename as the exact name. Only when lacking as argument
@@ -118,26 +127,36 @@ def capture(camera=None,
 
         assert panel in cmds.playblast(activeEditor=True)
 
-        with _applied_viewport_options(viewport_options, panel):
-            with _applied_camera_options(camera_options, panel, camera):
-                with _applied_display_options(display_options):
-                    with _isolated_nodes(isolate, panel):
-                        output = cmds.playblast(
-                            compression=compression,
-                            format=format,
-                            percent=100,
-                            quality=100,
-                            viewer=viewer,
-                            startTime=start_frame,
-                            endTime=end_frame,
-                            offScreen=off_screen,
-                            forceOverwrite=overwrite,
-                            filename=filename,
-                            widthHeight=[width, height],
-                            rawFrameNumbers=raw_frame_numbers,
-                            **playblast_kwargs)
+        # Set the options the user specified
+        with _options(context_options, panel, camera):
+            with _isolated_nodes(isolate, panel):
+                output = cmds.playblast(
+                    compression=compression,
+                    format=format,
+                    percent=100,
+                    quality=100,
+                    viewer=viewer,
+                    startTime=start_frame,
+                    endTime=end_frame,
+                    offScreen=off_screen,
+                    forceOverwrite=overwrite,
+                    filename=filename,
+                    widthHeight=[width, height],
+                    rawFrameNumbers=raw_frame_numbers,
+                    **playblast_kwargs)
 
         return output
+
+@contextlib.contextmanager
+def _options(options, panel, camera):
+    """Context-manager to temporarily assign the options and afterwards
+    restore the original"""
+    original = options.current(panel, camera)
+    options.set(panel, camera)
+    try:
+        yield
+    finally:
+        original.set(panel, camera)
 
 
 def snap(*args, **kwargs):
@@ -196,77 +215,6 @@ def snap(*args, **kwargs):
     return output
 
 
-class ViewportOptions:
-    """Viewport options for :func:`capture`"""
-
-    useDefaultMaterial = False
-    wireframeOnShaded = False
-    displayAppearance = 'smoothShaded'
-
-    # Visibility flags
-    nurbsCurves = False
-    nurbsSurfaces = False
-    polymeshes = True
-    subdivSurfaces = False
-    cameras = False
-    lights = False
-    grid = False
-    joints = False
-    ikHandles = False
-    deformers = False
-    dynamics = False
-    fluids = False
-    hairSystems = False
-    follicles = False
-    nCloths = False
-    nParticles = False
-    nRigids = False
-    dynamicConstraints = False
-    locators = False
-    manipulators = False
-    dimensions = False
-    handles = False
-    pivots = False
-    textures = False
-    strokes = False
-
-
-class CameraOptions:
-    """Camera settings for :func:`capture`
-
-    Camera options are applied to the specified camera and
-    then reverted once the capture is complete.
-
-    """
-
-    displayGateMask = False
-    displayResolution = False
-    displayFilmGate = False
-
-
-class DisplayOptions:
-    """Display options for :func:`capture`
-
-    Use this struct for background color, anti-alias and other
-    display-related options.
-
-    """
-    displayGradient = True
-    background = (0.631, 0.631, 0.631)
-    backgroundTop = (0.535, 0.617, 0.702)
-    backgroundBottom = (0.052, 0.052, 0.052)
-
-
-def _parse_options(options):
-    """Return dictionary of properties from option-objects"""
-    opts = dict()
-    for attr in dir(options):
-        if attr.startswith("__"):
-            continue
-        opts[attr] = getattr(options, attr)
-    return opts
-
-
 @contextlib.contextmanager
 def _independent_panel(width, height):
     """Create capture-window context without decorations
@@ -318,89 +266,6 @@ def _independent_panel(width, height):
         # Delete the panel to fix memory leak (about 5 mb per capture)
         cmds.deleteUI(panel, panel=True)
         cmds.deleteUI(window)
-
-
-@contextlib.contextmanager
-def _applied_viewport_options(options, panel):
-    """Context manager for applying `options` to `panel`"""
-
-    from maya import cmds
-
-    options = options or ViewportOptions()
-    options = _parse_options(options)
-    cmds.modelEditor(panel,
-                     edit=True,
-                     allObjects=False,
-                     grid=False,
-                     manipulators=False)
-    cmds.modelEditor(panel, edit=True, **options)
-
-    yield
-
-
-@contextlib.contextmanager
-def _applied_camera_options(options, panel, camera):
-    """Context manager for applying `options` to `camera`"""
-
-    from maya import cmds
-
-    old_options = None
-
-    if options is not None:
-        options = _parse_options(options)
-        old_options = dict()
-
-        for opt in options:
-            try:
-                old_options[opt] = cmds.getAttr(camera + "." + opt)
-            except:
-                sys.stderr.write("Could not get camera attribute "
-                                 "for capture: %s" % opt)
-                delattr(options, opt)
-
-        for opt, value in options.iteritems():
-            cmds.setAttr(camera + "." + opt, value)
-
-    try:
-        yield
-    finally:
-        if old_options:
-            for opt, value in old_options.iteritems():
-                cmds.setAttr(camera + "." + opt, value)
-
-
-@contextlib.contextmanager
-def _applied_display_options(options):
-    """Context manager for setting background color display options."""
-    from maya import cmds
-
-    options = options or DisplayOptions()
-
-    colors = ['background', 'backgroundTop', 'backgroundBottom']
-    prefs = ['displayGradient']
-
-    # store current settings
-    original = {}
-    for clr in colors:
-        original[clr] = cmds.displayRGBColor(clr, query=True)
-    for pref in prefs:
-        original[pref] = cmds.displayPref(query=True, **{pref: True})
-
-    # apply settings of options
-    for clr in colors:
-        value = getattr(options, clr)
-        cmds.displayRGBColor(clr, *value)
-    for pref in prefs:
-        value = getattr(options, pref)
-        cmds.displayPref(**{pref: value})
-
-    yield
-
-    # restore original settings
-    for clr in colors:
-        cmds.displayRGBColor(clr, *original[clr])
-    for pref in prefs:
-        cmds.displayPref(**{pref: original[pref]})
 
 
 @contextlib.contextmanager
