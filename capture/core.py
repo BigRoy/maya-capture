@@ -147,17 +147,6 @@ def capture(camera=None,
 
         return output
 
-@contextlib.contextmanager
-def _options(options, panel, camera):
-    """Context-manager to temporarily assign the options and afterwards
-    restore the original"""
-    original = options.current(panel, camera)
-    options.set(panel, camera)
-    try:
-        yield
-    finally:
-        original.set(panel, camera)
-
 
 def snap(*args, **kwargs):
     """Single frame playblast in an independent panel.
@@ -233,12 +222,12 @@ def _independent_panel(width, height):
 
     # center panel on screen
     screen_width, screen_height = _get_screen_size()
-    topLeft = [int((screen_height-height)/2.0),
-               int((screen_width-width)/2.0)]
+    top_left = [int((screen_height-height)/2.0),
+                int((screen_width-width)/2.0)]
 
     window = cmds.window(width=width,
                          height=height,
-                         topLeftCorner=topLeft,
+                         topLeftCorner=top_left,
                          menuBarVisible=False,
                          titleBar=False)
     cmds.paneLayout()
@@ -268,6 +257,43 @@ def _independent_panel(width, height):
         cmds.deleteUI(window)
 
 
+def _inject(fn, kwargs):
+    """Dependency inject the function with the keyword arguments"""
+    import inspect
+    argspec = inspect.getargspec(fn)
+
+    fn_args = (kwargs[x] for x in argspec.args if x != 'self')
+    fn_kwargs = dict((key, kwargs[key]) for key in argspec.kwargs)
+    return fn(*fn_args, **fn_kwargs)
+
+
+@contextlib.contextmanager
+def _options(options, panel, camera):
+    """Context-manager to temporarily assign the options and afterwards
+    restore the original"""
+
+    # We will dependency inject the expected arguments
+    kwargs = {'panel': panel,
+              'camera': camera}
+
+    originals = []
+    try:
+        for option in options:
+            # Get expected arguments and inject them
+            original = _inject(option.current, kwargs)
+            originals.append(original)
+            _inject(option.set, kwargs)
+        yield
+    finally:
+        for original in originals:
+            try:
+                _inject(original.set, kwargs)
+            except RuntimeError, e:
+                opt_name = type(original).__name__
+                sys.stderr.write("Reverting to original {0} "
+                                 "failed: {1}".format(opt_name, e))
+
+
 @contextlib.contextmanager
 def _isolated_nodes(nodes, panel):
     """Context manager for isolating `nodes` in `panel`"""
@@ -291,5 +317,5 @@ def _image_to_clipboard(path):
 def _get_screen_size():
     """Return available screen size without space occupied by taskbar"""
     import PySide.QtGui
-    rect =  PySide.QtGui.QDesktopWidget().screenGeometry(-1)
+    rect = PySide.QtGui.QDesktopWidget().screenGeometry(-1)
     return [rect.width(), rect.height()]
