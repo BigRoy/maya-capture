@@ -7,6 +7,7 @@ Playblasting with independent viewport, camera and display options
 import re
 import sys
 import contextlib
+import logging
 
 from maya import cmds
 from maya import mel
@@ -21,6 +22,8 @@ version_info = (2, 2, 0)
 
 __version__ = "%s.%s.%s" % version_info
 __license__ = "MIT"
+
+log = logging.getLogger(__name__)
 
 
 def capture(camera=None,
@@ -129,6 +132,13 @@ def capture(camera=None,
     # (#77) Ignore `filename` when `complete_filename` provided
     if complete_filename is not None:
         filename = None
+
+    # (#78) Only image format supports raw frame numbers so we ignore it
+    # when calling it with a different format
+    if format != "image" and raw_frame_numbers:
+        log.warning("Capturing to non-image format with raw frame numbers is "
+                    "not supported: %s. Ignoring raw frame numbers.", format)
+        raw_frame_numbers = False
 
     # (#74) Bugfix: `maya.cmds.playblast` will raise an error when playblasting
     # with `rawFrameNumbers` set to True but no explicit `frames` provided.
