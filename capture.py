@@ -126,6 +126,10 @@ def capture(camera=None,
     if end_frame is None:
         end_frame = cmds.playbackOptions(maxTime=True, query=True)
 
+    # (#77) Ignore `filename` when `complete_filename` provided
+    if complete_filename is not None:
+        filename = None
+
     # (#74) Bugfix: `maya.cmds.playblast` will raise an error when playblasting
     # with `rawFrameNumbers` set to True but no explicit `frames` provided.
     # Since we always know what frames will be included we can provide it
