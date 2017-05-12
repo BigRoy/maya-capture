@@ -137,7 +137,7 @@ def capture(camera=None,
     # when calling it with a different format
     if format != "image" and raw_frame_numbers:
         log.warning("Capturing to non-image format with raw frame numbers is "
-                    "not supported: %s. Ignoring raw frame numbers.", format)
+                    "not supported: '%s'. Ignoring raw frame numbers.", format)
         raw_frame_numbers = False
 
     # (#74) Bugfix: `maya.cmds.playblast` will raise an error when playblasting
